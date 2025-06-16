@@ -1,1 +1,1 @@
-web: python assistant_bridge.py
+web: gunicorn assistant_bridge:app
