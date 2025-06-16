@@ -122,6 +122,6 @@ def handle_message():
         return jsonify({"error": str(e)}), 500
 
 # --- รัน Flask App ---
-# if __name__ == "__main__":
-    # Render จะใช้ Gunicorn ในการรัน Flask App ใน Production
-    # สำหรับการทดสอบบน Local สามารถรันแบบนี้ได้
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
