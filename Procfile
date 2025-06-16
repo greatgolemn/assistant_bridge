@@ -1,1 +1,1 @@
-worker: python assistant_bridge.py
+web: python assistant_bridge.py
