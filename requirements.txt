@@ -39,3 +39,4 @@ uvicorn==0.29.0
 watchfiles==1.0.5
 websockets==15.0.1
 Flask==3.1.1
+gunicorn 23.0.0
