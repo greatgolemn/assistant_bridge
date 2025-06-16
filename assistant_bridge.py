@@ -28,7 +28,7 @@ def call_google_apps_script(function_name, arguments):
         headers = {"Content-Type": "application/json"}
         try:
             response = requests.post(GOOGLE_APPS_SCRIPT_WEB_APP_URL, data=json.dumps(arguments), headers=headers)
-            response.raise_for_status()  # ตรวจสอบว่ามีข้อผิดพลาด HTTP หรือไม่
+            response.raise_for_status()
             result = response.json()
             print(f"[Bridge] Google Apps Script response: {result}")
             return result
