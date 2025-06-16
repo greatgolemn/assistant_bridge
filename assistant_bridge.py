@@ -2,7 +2,10 @@ import openai
 import json
 import requests
 import time
-import os # เพิ่มบรรทัดนี้
+import os
+from flask import Flask, request, jsonify # เพิ่ม Flask
+
+app = Flask(__name__)
 
 # --- กำหนดค่าของคุณที่นี่ (อ่านจาก Environment Variables) ---
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -35,31 +38,35 @@ def call_google_apps_script(function_name, arguments):
     else:
         return {"success": False, "error": f"Unknown function: {function_name}"}
 
-# --- ฟังก์ชันหลักของ Bridge Application ---
-def run_assistant_bridge():
-    print("\n--- Assistant Bridge Started ---")
-    print("Type 'exit' to quit.\n")
+# --- Endpoint สำหรับรับข้อความจากภายนอก ---
+@app.route("/message", methods=["POST"])
+def handle_message():
+    data = request.json
+    user_message = data.get("message")
+    thread_id = data.get("thread_id") # หากต้องการใช้ Thread เดิม
 
-    # สร้าง Thread ใหม่สำหรับการสนทนาแต่ละครั้ง (หรือใช้ Thread เดิมหากต้องการสนทนาต่อเนื่อง)
-    thread = client.beta.threads.create()
-    print(f"[Bridge] New Thread created: {thread.id}")
+    if not user_message:
+        return jsonify({"error": "'message' field is required"}), 400
 
-    while True:
-        user_input = input("You: ")
-        if user_input.lower() == 'exit':
-            print("Exiting Assistant Bridge.")
-            break
+    # หากไม่มี thread_id ให้สร้างใหม่ (หรือจัดการตามที่คุณต้องการ)
+    if not thread_id:
+        thread = client.beta.threads.create()
+        thread_id = thread.id
+        print(f"[Bridge] New Thread created: {thread_id}")
+    else:
+        print(f"[Bridge] Using existing Thread: {thread_id}")
 
+    try:
         # 1. เพิ่มข้อความของผู้ใช้ลงใน Thread
         client.beta.threads.messages.create(
-            thread_id=thread.id,
+            thread_id=thread_id,
             role="user",
-            content=user_input,
+            content=user_message,
         )
 
         # 2. สร้าง Run เพื่อให้ Assistant ประมวลผล
         run = client.beta.threads.runs.create(
-            thread_id=thread.id,
+            thread_id=thread_id,
             assistant_id=ASSISTANT_ID,
         )
 
@@ -67,7 +74,7 @@ def run_assistant_bridge():
         while run.status == 'queued' or run.status == 'in_progress' or run.status == 'requires_action':
             time.sleep(1)  # รอ 1 วินาที ก่อนตรวจสอบสถานะอีกครั้ง
             run = client.beta.threads.runs.retrieve(
-                thread_id=thread.id,
+                thread_id=thread_id,
                 run_id=run.id
             )
 
@@ -88,67 +95,34 @@ def run_assistant_bridge():
                 
                 # ส่งผลลัพธ์ของ Tool กลับไปให้ Assistant
                 run = client.beta.threads.runs.submit_tool_outputs(
-                    thread_id=thread.id,
+                    thread_id=thread_id,
                     run_id=run.id,
                     tool_outputs=tool_outputs
                 )
 
-        # 4. เมื่อ Run เสร็จสิ้น, ดึงข้อความทั้งหมดจาก Thread และแสดงข้อความล่าสุดของ Assistant
+        # 4. เมื่อ Run เสร็จสิ้น, ดึงข้อความทั้งหมดจาก Thread และส่งข้อความล่าสุดของ Assistant กลับไป
         if run.status == 'completed':
             messages = client.beta.threads.messages.list(
-                thread_id=thread.id
+                thread_id=thread_id
             )
-            # แสดงข้อความล่าสุดของ Assistant
+            assistant_response = ""
             for msg in reversed(messages.data):
                 if msg.role == "assistant":
                     for content_block in msg.content:
                         if content_block.type == 'text':
-                            print(f"Assistant: {content_block.text.value}")
-                            break # แสดงแค่ข้อความแรกของ Assistant
+                            assistant_response = content_block.text.value
+                            break
                     break
+            return jsonify({"response": assistant_response, "thread_id": thread_id})
         else:
-            print(f"[Bridge] Run ended with status: {run.status}")
+            return jsonify({"error": f"Run ended with status: {run.status}"}), 500
 
-# --- รัน Bridge Application ---
+    except Exception as e:
+        print(f"[Bridge] An error occurred: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# --- รัน Flask App ---
 if __name__ == "__main__":
-    # ตัวอย่างการสร้าง Assistant และ Tool (ทำเพียงครั้งเดียว หรือถ้าคุณมีอยู่แล้วก็ข้ามไปได้)
-    # หากคุณยังไม่มี Assistant ID ให้รันโค้ดนี้เพื่อสร้าง Assistant และ Tool
-    # และคัดลอก ASSISTANT_ID ที่ได้ไปใส่ในโค้ดด้านบน
-    # try:
-    #     my_assistant = client.beta.assistants.retrieve(ASSISTANT_ID)
-    #     print(f"[Bridge] Using existing Assistant: {my_assistant.id}")
-    # except openai.NotFoundError:
-    #     print("[Bridge] Assistant not found. Creating a new one...")
-    #     my_assistant = client.beta.assistants.create(
-    #         name="Order Bot",
-    #         instructions="You are an order bot. Use the provided tools to submit orders.",
-    #         model="gpt-4o", # หรือรุ่นที่คุณใช้
-    #         tools=[
-    #             {
-    #                 "type": "function",
-    #                 "function": {
-    #                     "name": "submit_order",
-    #                     "description": "Submits a customer order to the backend system.",
-    #                     "parameters": {
-    #                         "type": "object",
-    #                         "properties": {
-    #                             "menu": {"type": "string", "description": "Menu item ordered"},
-    #                             "type": {"type": "string", "description": "Type of order (e.g., พร้อมทาน)"},
-    #                             "quantity": {"type": "integer", "description": "Quantity of the item"},
-    #                             "meat": {"type": "string", "description": "Type of meat"},
-    #                             "nickname": {"type": "string", "description": "Customer\'s nickname"},
-    #                             "phone": {"type": "string", "description": "Customer\'s phone number"},
-    #                             "location": {"type": "string", "description": "Delivery location"},
-    #                             "date": {"type": "string", "description": "Delivery date (YYYY-MM-DD)"},
-    #                             "time": {"type": "string", "description": "Delivery time (HH:MM)"}
-    #                         },
-    #                         "required": ["menu", "type", "quantity", "meat", "nickname", "phone", "location", "date", "time"]
-    #                     },
-    #                 },
-    #             }
-    #         ]
-    #     )
-    #     ASSISTANT_ID = my_assistant.id
-    #     print(f"[Bridge] New Assistant created with ID: {ASSISTANT_ID}")
-    
-    run_assistant_bridge()
+    # Render จะใช้ Gunicorn ในการรัน Flask App ใน Production
+    # สำหรับการทดสอบบน Local สามารถรันแบบนี้ได้
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
